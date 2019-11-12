@@ -98,14 +98,14 @@ def CBOW(centerWord, contextWords, inputMatrix, outputMatrix, mode2):
             else:
                 loss -= np.log(1 - sigmoid_grad[:, i])
         grad_out = torch.mm(sigmoid_grad.view(-1, 1), z1)
-        grad_emb = torch.mm(sigmoid_grad, outputMatrix) /10
+        grad_emb = torch.mm(sigmoid_grad, outputMatrix) /5
 
     elif mode2 == "NS":
         sigmoid_grad = sigmoid
-        loss = torch.sum(-np.log(1-sigmoid_grad[:, :(outputMatrix.shape[0]-2)]), axis=1) - np.log(sigmoid_grad[:, outputMatrix.shape[0]-1])
+        loss = torch.sum(-np.log(1-sigmoid_grad[:, :(outputMatrix.shape[0]-2)] + 1e-7), axis=1) - np.log(sigmoid_grad[:, outputMatrix.shape[0]-1] + 1e-7)
         sigmoid_grad[:, outputMatrix.shape[0]-1] -= 1
         grad_out = torch.mm(sigmoid_grad.view(-1, 1), z1)
-        grad_emb = torch.mm(sigmoid_grad, outputMatrix) /10
+        grad_emb = torch.mm(sigmoid_grad, outputMatrix) /5
         
     else:
         loss = -np.log(softmax[:, centerWord] + 1e-7)
@@ -117,7 +117,7 @@ def CBOW(centerWord, contextWords, inputMatrix, outputMatrix, mode2):
     return loss, grad_emb, grad_out
 
 
-def word2vec_trainer(corpus, word2ind, mode="CBOW", mode2="HS", mode3=None, dimension=100, learning_rate=0.025, iteration=50000):
+def word2vec_trainer(corpus, word2ind, mode="CBOW", mode2="HS", mode3=None, dimension=300, learning_rate=0.05, iteration=10000):
 
 # Xavier initialization of weight matrices
     W_emb = torch.randn(len(word2ind), dimension) / (dimension**0.5)
@@ -135,13 +135,24 @@ def word2vec_trainer(corpus, word2ind, mode="CBOW", mode2="HS", mode3=None, dime
 
     if mode3 == "SB":
         freq = Counter(corpus)
-        t = 1e-5
-        for word in corpus:
+        t = 0.5
+        rand_table = np.random.random(size = len(corpus))
+        temp = []
+        for idx, word in enumerate(corpus):
             prob = 1-np.sqrt(t/freq[word])
-            if np.random.random() < prob:
-                corpus.remove(word)
+            if rand_table[idx] < prob:
+                temp.append(idx)
+            if idx % 1000000 == 0:
+                print('now {} words finished'.format(idx))
+        corpus = list(np.delete(corpus, temp))
+        print('Subsampling finished')
+        print('size : {}'.format(len(corpus)))
+        iteration = len(corpus)
+    if mode == "SG" and mode3 != "SB":
+        iteration = 500000
     
     losses=[]
+    print('iter: {}'.format(iteration))
     for i in range(iteration):
         #Training word2vec using SGD
         centerword, context = getRandomContext(corpus, window_size)
@@ -219,7 +230,7 @@ def word2vec_trainer(corpus, word2ind, mode="CBOW", mode2="HS", mode3=None, dime
             print("Unkwnown mode : "+mode)
             exit()
 
-        if i%10000==0:
+        if i%100000==0:
             avg_loss=sum(losses)/len(losses)
             print("Loss : %f" %(avg_loss,))
             losses=[]
@@ -242,6 +253,17 @@ def sim(testword, word2ind, ind2word, matrix):
     print("===============================================")
     print()
 
+def testing(vec, ind2word, matrix):
+    vec_length = torch.sum((vec*vec))**0.5
+    length = (matrix*matrix).sum(1)**0.5
+    vec_normed = vec.reshape(1, -1)/vec_length
+    sim = (vec_normed@matrix.t())[0]/length
+    values, indices = sim.squeeze().topk(5)
+    result = []
+    for i in indices:
+        result.append(ind2word[i.item()])
+    return result
+
 
 def main():
     parser = argparse.ArgumentParser(description='Word2vec')
@@ -252,11 +274,13 @@ def main():
     parser.add_argument('mode2', metavar='mode2', type=str,
                         help='"HS" for Hierarchical Softmax, "NS" for Negative Sampling')
     parser.add_argument('mode3', metavar='mode3', type=str, help='"SB" for subsampling, default is None')
+    parser.add_argument('test', metavar='test', type=str, help='learn and testing')
     args = parser.parse_args()
     mode = args.mode
     part = args.part
     mode2 = args.mode2
     mode3 = args.mode3
+    test = args.test
 
     #Load and tokenize corpus
     print("loading...")
@@ -291,13 +315,27 @@ def main():
         ind2word[v]=k
 
     print("Vocabulary size")
-    print(len(word2ind))
+    print(len(word2ind), len(processed))
     print()
 
     #Training section
-    emb,_ = word2vec_trainer(processed, word2ind, mode=mode, mode2=mode2, mode3=mode3, dimension=300, learning_rate=0.02, iteration=150000)
-    
-    #Print similar words
+    emb,_ = word2vec_trainer(processed, word2ind, mode=mode, mode2=mode2, mode3=mode3, dimension=300, learning_rate=0.01, iteration=len(processed))
+    print("1 epoch finished")
+    if test == "test":
+        test_text = open('questions-words.txt', 'r').read().splitlines()
+        result = []
+        for i in test_text[1:]:
+            test_words = i.split(' ')[:-1]
+            test_lower = []
+            for j in test_words:
+                test_lower.append(j.lower())
+            try:
+                vec = -emb[word2ind[test_lower[0]]] + emb[word2ind[test_lower[1]]] + emb[word2ind[test_lower[2]]]
+                result.append(testing(vec, ind2word, emb))
+            except Exception as e:
+                print(e)
+                break
+        print(result)
     testwords = ["one", "are", "he", "have", "many", "first", "all", "world", "people", "after"]
     for tw in testwords:
         sim(tw,word2ind,ind2word,emb)
