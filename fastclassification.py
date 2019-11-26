@@ -88,7 +88,7 @@ def testing(X_test, y_test, word2ind, emb, out):
             except:
                 pass
         y_pred = Layer(X, [], emb, out, mode='test')
-        answer.append(y_pred.items())
+        answer.append(y_pred.item())
         if int(y_test[t]) == y_pred + 1:
             acc += 1
     print('test_acc: {}'.format(acc/len(X_test)))
